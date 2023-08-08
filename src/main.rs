@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use file_server::ServerFiles;
 
+mod file_client;
 mod file_server;
 
 fn main() {

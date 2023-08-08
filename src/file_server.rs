@@ -13,8 +13,8 @@ pub struct FileServer {
 }
 
 impl FileServer {
-    pub fn new(address: impl ToSocketAddrs, files: ServerFiles) -> FileServer {
-        let socket = TcpListener::bind(address).expect("Failed to bind to port");
+    pub fn new(addr: impl ToSocketAddrs, files: ServerFiles) -> FileServer {
+        let socket = TcpListener::bind(addr).expect("Failed to bind to port");
         FileServer { socket, files }
     }
 
