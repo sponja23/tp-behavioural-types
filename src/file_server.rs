@@ -39,26 +39,32 @@ impl FileServer {
 }
 
 pub struct FileServerWorker<'a> {
-    stream: TcpStream,
+    read_stream: BufReader<TcpStream>,
+    write_stream: TcpStream,
     files: &'a ServerFiles,
 }
 
 impl<'a> FileServerWorker<'a> {
     pub fn new(stream: TcpStream, files: &'a ServerFiles) -> FileServerWorker {
-        FileServerWorker { stream, files }
+        FileServerWorker {
+            read_stream: BufReader::new(stream.try_clone().expect("Failed to clone TcpStream")),
+            write_stream: stream,
+            files,
+        }
     }
 
     fn read_line(&mut self) -> String {
         let mut buf = String::new();
-        let mut reader = BufReader::new(&mut self.stream);
-        reader
+        self.read_stream
             .read_line(&mut buf)
             .expect("Failed to read from stream");
-        buf
+        buf.trim().into()
     }
 
     fn send_byte(&mut self, value: u8) {
-        self.stream.write(&[value]).expect("Failed to send byte");
+        self.write_stream
+            .write_all(&[value])
+            .expect("Failed to send byte");
     }
 
     fn handle_request(&mut self, filename: String) {
@@ -76,9 +82,10 @@ impl<'a> FileServerWorker<'a> {
 
     pub fn start(&mut self) {
         loop {
-            match self.read_line().trim() {
+            match self.read_line().as_str() {
                 "REQUEST" => {
                     let filename = self.read_line();
+                    println!("Requested filename: {filename}");
                     self.handle_request(filename)
                 }
                 "CLOSE" => break,
