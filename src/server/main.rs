@@ -20,8 +20,8 @@ impl FileServer {
     }
 
     pub fn run_worker(&self, stream: TcpStream) {
-        // Files are cloned because we couldn't figure out how to use lifetime
-        // parameters with typestate.
+        // File map is cloned because we couldn't figure out how to use
+        // lifetime parameters with the typestate macro.
         let mut worker = FileServerWorker::start(stream, self.files.clone());
 
         loop {
