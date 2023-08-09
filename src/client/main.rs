@@ -1,27 +1,139 @@
-#![allow(dead_code)]
-
 use std::{
     io::{Read, Write},
     net::{TcpStream, ToSocketAddrs},
 };
 
-pub struct FileClient {
-    stream: TcpStream,
+#[typestate::typestate]
+pub mod client {
+    use std::net::{TcpStream, ToSocketAddrs};
+
+    #[automaton]
+    pub struct FileClient {
+        pub stream: TcpStream,
+    }
+
+    #[state]
+    pub struct Idle;
+    pub trait Idle {
+        fn connect_to(addr: impl ToSocketAddrs) -> Idle;
+        fn start_request(self, filename: String) -> AwaitingResponse;
+        fn close_connection(self);
+    }
+
+    #[state]
+    pub struct ResponseEnded {
+        pub result: Vec<u8>,
+    }
+    pub trait ResponseEnded {
+        fn end_request(self) -> Idle;
+    }
+
+    #[state]
+    pub struct ReceivingByte {
+        pub file_bytes: Vec<u8>,
+    }
+    pub trait ReceivingByte {
+        fn receive_byte(self) -> AwaitingResponse;
+    }
+
+    pub enum AwaitingResponse {
+        #[metadata(label = "Receiving a byte")]
+        ReceivingByte,
+        #[metadata(label = "End of response")]
+        ResponseEnded,
+    }
 }
 
-impl FileClient {
-    pub fn connect_to(addr: impl ToSocketAddrs) -> FileClient {
+use client::*;
+
+impl IdleState for FileClient<Idle> {
+    fn connect_to(addr: impl ToSocketAddrs) -> FileClient<Idle> {
+        let stream = TcpStream::connect(addr).expect("Connection failed");
+
         FileClient {
-            stream: TcpStream::connect(addr).expect("Connection failed"),
+            stream,
+            state: Idle,
         }
     }
 
+    fn start_request(mut self, filename: String) -> AwaitingResponse {
+        self.send(format!("REQUEST\n{filename}\n").as_bytes());
+
+        AwaitingResponse::ReceivingByte(FileClient {
+            stream: self.stream,
+            state: ReceivingByte {
+                file_bytes: Vec::new(),
+            },
+        })
+    }
+
+    fn close_connection(mut self) {
+        self.send(b"CLOSE\n");
+    }
+}
+
+impl ReceivingByteState for FileClient<ReceivingByte> {
+    fn receive_byte(mut self) -> AwaitingResponse {
+        let byte = self.read_byte();
+
+        if byte == 0 {
+            AwaitingResponse::ResponseEnded(FileClient {
+                stream: self.stream,
+                state: ResponseEnded {
+                    result: self.state.file_bytes,
+                },
+            })
+        } else {
+            self.state.file_bytes.push(byte);
+            AwaitingResponse::ReceivingByte(FileClient {
+                stream: self.stream,
+                state: ReceivingByte {
+                    file_bytes: self.state.file_bytes,
+                },
+            })
+        }
+    }
+}
+
+impl ResponseEndedState for FileClient<ResponseEnded> {
+    fn end_request(self) -> FileClient<Idle> {
+        FileClient {
+            stream: self.stream,
+            state: Idle,
+        }
+    }
+}
+
+// Auxiliary methods
+
+impl FileClient<Idle> {
+    // Send a byte array to the server
+    // Can only be done in Idle state, to initiate a request or to close the connection
     fn send(&mut self, data: &[u8]) {
         self.stream
             .write_all(data)
             .expect("Failed to write to stream");
     }
 
+    fn request_file(self, filename: String, buf: &mut Vec<u8>) -> FileClient<Idle> {
+        let mut response = self.start_request(filename);
+
+        loop {
+            response = match response {
+                AwaitingResponse::ReceivingByte(worker) => worker.receive_byte(),
+                AwaitingResponse::ResponseEnded(worker) => {
+                    buf.clear();
+                    buf.extend(worker.state.result.clone());
+                    return worker.end_request();
+                }
+            }
+        }
+    }
+}
+
+impl FileClient<ReceivingByte> {
+    // Read a single byte from the server
+    // Can only be done in ReceivingByte state, to receive a byte of the file
     fn read_byte(&mut self) -> u8 {
         let mut buf = [0; 1];
         self.stream
@@ -29,34 +141,15 @@ impl FileClient {
             .expect("Failed to read from stream");
         buf[0]
     }
-
-    pub fn request_file(&mut self, filename: String) -> Vec<u8> {
-        self.send(format!("REQUEST\n{filename}\n").as_bytes());
-
-        let mut file_bytes = Vec::new();
-
-        loop {
-            let byte = self.read_byte();
-
-            if byte == 0 {
-                break;
-            }
-
-            file_bytes.push(byte);
-        }
-
-        file_bytes
-    }
-
-    pub fn close(mut self) {
-        self.send(b"CLOSE\n");
-    }
 }
 
 fn main() {
     let mut client = FileClient::connect_to("0.0.0.0:1234");
 
-    let file_bytes = client.request_file("file-a.txt".into());
-    println!("{}", String::from_utf8(file_bytes).unwrap());
-    client.close();
+    let mut buf = Vec::new();
+    client = client.request_file("file-a.txt".to_string(), &mut buf);
+
+    println!("{}", String::from_utf8(buf).unwrap());
+
+    client.close_connection();
 }
