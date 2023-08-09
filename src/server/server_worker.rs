@@ -70,6 +70,10 @@ pub mod worker {
 
 pub use worker::*;
 
+//
+// State transitions
+//
+
 impl IdleState for FileServerWorker<Idle> {
     fn create_worker(stream: TcpStream, files: ServerFiles) -> FileServerWorker<Idle> {
         let read_stream = BufReader::new(stream.try_clone().unwrap());
@@ -169,13 +173,16 @@ impl CloseConnectionState for FileServerWorker<CloseConnection> {
     fn close_connection(self) {}
 }
 
+//
+// Auxiliary functions
+//
+
 impl FileServerWorker<Idle> {
+    // Run the worker, handling requests until the client closes the connection
     pub fn run(mut self) {
         loop {
-            match self.read_command() {
-                Command::FileRequested(request_worker) => {
-                    self = request_worker.handle_request();
-                }
+            self = match self.read_command() {
+                Command::FileRequested(request_worker) => request_worker.handle_request(),
                 Command::CloseConnection(worker) => {
                     worker.close_connection();
                     break;
@@ -188,15 +195,12 @@ impl FileServerWorker<Idle> {
 impl FileServerWorker<FileRequested> {
     pub fn handle_request(self) -> FileServerWorker<Idle> {
         let mut response = self.respond();
+
         loop {
-            match response {
-                Respond::Send(worker) => {
-                    response = worker.send_byte();
-                }
-                Respond::EndResponse(worker) => {
-                    return worker.end_response();
-                }
-            }
+            response = match response {
+                Respond::Send(worker) => worker.send_byte(),
+                Respond::EndResponse(worker) => return worker.end_response(),
+            };
         }
     }
 }

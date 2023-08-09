@@ -46,6 +46,10 @@ pub mod client {
 
 use client::*;
 
+//
+// State transitions
+//
+
 impl IdleState for FileClient<Idle> {
     fn connect_to(addr: impl ToSocketAddrs) -> FileClient<Idle> {
         let stream = TcpStream::connect(addr).expect("Connection failed");
@@ -104,7 +108,9 @@ impl ResponseEndedState for FileClient<ResponseEnded> {
     }
 }
 
-// Auxiliary methods
+//
+// Auxiliary functions
+//
 
 impl FileClient<Idle> {
     // Send a byte array to the server
