@@ -25,7 +25,27 @@ impl FileServer {
         let mut worker = FileServerWorker::start(stream, self.files.clone());
 
         loop {
-            todo!();
+            match worker.read_command() {
+                Command::FileRequested(request_worker) => {
+                    let mut response = request_worker.respond();
+
+                    loop {
+                        match response {
+                            Respond::Send(response_worker) => {
+                                response = response_worker.send_byte();
+                            }
+                            Respond::EndResponse(response_worker) => {
+                                worker = response_worker.end_response();
+                                break;
+                            }
+                        }
+                    }
+                }
+                Command::CloseConnection(closing_worker) => {
+                    closing_worker.close_connection();
+                    break;
+                }
+            }
         }
     }
 
