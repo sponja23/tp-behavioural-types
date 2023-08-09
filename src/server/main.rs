@@ -1,10 +1,8 @@
-use crate::server_worker::FileServerWorker;
-
-use self::server_worker::ServerFiles;
+use server_worker::*;
 
 use std::{
     collections::HashMap,
-    net::{TcpListener, ToSocketAddrs},
+    net::{TcpListener, TcpStream, ToSocketAddrs},
     thread,
 };
 
@@ -21,23 +19,30 @@ impl FileServer {
         FileServer { socket, files }
     }
 
+    pub fn run_worker(&self, stream: TcpStream) {
+        // Files are cloned because we couldn't figure out how to use lifetime
+        // parameters with typestate.
+        let mut worker = FileServerWorker::start(stream, self.files.clone());
+
+        loop {
+            todo!();
+        }
+    }
+
     pub fn start(&self) {
         thread::scope(|s| {
             for stream in self.socket.incoming() {
                 match stream {
                     Ok(stream) => {
                         println!("New connection: {}", stream.peer_addr().unwrap());
-                        s.spawn(|| {
-                            let mut worker = FileServerWorker::new(stream, &self.files);
-                            worker.start();
-                        });
+                        s.spawn(|| self.run_worker(stream));
                     }
                     Err(e) => {
                         println!("Error: {}", e);
                     }
                 }
             }
-        })
+        });
     }
 }
 

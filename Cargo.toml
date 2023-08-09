@@ -12,3 +12,6 @@ path = "src/server/main.rs"
 [[bin]]
 name = "client"
 path = "src/client/main.rs"
+
+[dependencies]
+typestate = "0.8.0"
