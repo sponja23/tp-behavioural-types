@@ -22,31 +22,8 @@ impl FileServer {
     pub fn run_worker(&self, stream: TcpStream) {
         // File map is cloned because we couldn't figure out how to use
         // lifetime parameters with the typestate macro.
-        let mut worker = FileServerWorker::start(stream, self.files.clone());
-
-        loop {
-            match worker.read_command() {
-                Command::FileRequested(request_worker) => {
-                    let mut response = request_worker.respond();
-
-                    loop {
-                        match response {
-                            Respond::Send(response_worker) => {
-                                response = response_worker.send_byte();
-                            }
-                            Respond::EndResponse(response_worker) => {
-                                worker = response_worker.end_response();
-                                break;
-                            }
-                        }
-                    }
-                }
-                Command::CloseConnection(closing_worker) => {
-                    closing_worker.close_connection();
-                    break;
-                }
-            }
-        }
+        let worker = FileServerWorker::create_worker(stream, self.files.clone());
+        worker.run();
     }
 
     pub fn start(&self) {
