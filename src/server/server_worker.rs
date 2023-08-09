@@ -86,13 +86,9 @@ impl IdleState for FileServerWorker<Idle> {
     }
 
     fn read_command(mut self) -> Command {
-        let mut line = String::new();
-        self.read_stream.read_line(&mut line).unwrap();
-        match line.trim() {
+        match self.read_line().as_str() {
             "REQUEST" => {
-                let mut filename = String::new();
-                self.read_stream.read_line(&mut filename).unwrap();
-                filename = filename.trim().to_string();
+                let filename = self.read_line();
 
                 Command::FileRequested(FileServerWorker {
                     read_stream: self.read_stream,
@@ -189,6 +185,14 @@ impl FileServerWorker<Idle> {
                 }
             }
         }
+    }
+
+    // Read a line from the client
+    // Can only be done in the Idle state, to read the command (REQUEST or CLOSE) or the requested filename
+    fn read_line(&mut self) -> String {
+        let mut line = String::new();
+        self.read_stream.read_line(&mut line).unwrap();
+        line.trim().to_string()
     }
 }
 
