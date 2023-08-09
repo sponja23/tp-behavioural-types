@@ -88,6 +88,7 @@ impl IdleState for FileServerWorker<Idle> {
             "REQUEST" => {
                 let mut filename = String::new();
                 self.read_stream.read_line(&mut filename).unwrap();
+                filename = filename.trim().to_string();
 
                 Command::FileRequested(FileServerWorker {
                     read_stream: self.read_stream,
