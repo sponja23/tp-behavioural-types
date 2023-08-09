@@ -1,3 +1,4 @@
+use core::panic;
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Write},
@@ -85,14 +86,21 @@ impl<'a> FileServerWorker<'a> {
             match self.read_line().as_str() {
                 "REQUEST" => {
                     let filename = self.read_line();
-                    println!("Requested filename: {filename}");
                     self.handle_request(filename)
                 }
                 "CLOSE" => break,
                 _ => {
-                    println!("Invalid command")
+                    panic!("Unknown command");
                 }
             }
         }
     }
+}
+
+fn main() {
+    let mut files: ServerFiles = HashMap::new();
+    files.insert("file-a.txt".into(), "FILE A CONTENTS".into());
+
+    let server = FileServer::new("0.0.0.0:1234", files);
+    server.start();
 }
