@@ -121,6 +121,8 @@ impl FileClient<Idle> {
             .expect("Failed to write to stream");
     }
 
+    // Request a file from the server
+    // Can only be done in Idle state, to initiate a request
     fn request_file(self, filename: String, buf: &mut Vec<u8>) -> FileClient<Idle> {
         let mut response = self.start_request(filename);
 

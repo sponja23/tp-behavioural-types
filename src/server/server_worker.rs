@@ -1,49 +1,31 @@
 use std::{
-    collections::HashMap,
     io::{BufRead, BufReader, Write},
     net::TcpStream,
 };
 
-pub type ServerFiles = HashMap<String, Vec<u8>>;
-
 #[typestate::typestate]
 pub mod worker {
-    use super::ServerFiles;
-    use std::{collections::VecDeque, io::BufReader, net::TcpStream};
+    use std::{io::BufReader, net::TcpStream};
 
     #[automaton]
     pub struct FileServerWorker {
         pub read_stream: BufReader<TcpStream>,
         pub write_stream: TcpStream,
-        pub files: ServerFiles,
     }
 
     #[state]
     pub struct Idle;
     pub trait Idle {
-        fn create_worker(stream: TcpStream, files: ServerFiles) -> Idle;
+        fn start(stream: TcpStream) -> Idle;
         fn read_command(self) -> Command;
     }
 
     #[state]
-    pub struct FileRequested {
+    pub struct AnsweringRequest {
         pub filename: String,
     }
-    pub trait FileRequested {
-        fn respond(self) -> Respond;
-    }
-
-    #[state]
-    pub struct Send {
-        pub remaining_bytes: VecDeque<u8>,
-    }
-    pub trait Send {
-        fn send_byte(self) -> Respond;
-    }
-
-    #[state]
-    pub struct EndResponse;
-    pub trait EndResponse {
+    pub trait AnsweringRequest {
+        fn send_byte(self, byte: u8) -> AnsweringRequest;
         fn end_response(self) -> Idle;
     }
 
@@ -55,16 +37,9 @@ pub mod worker {
 
     pub enum Command {
         #[metadata(label = "Requested a file")]
-        FileRequested,
+        AnsweringRequest,
         #[metadata(label = "End of request")]
         CloseConnection,
-    }
-
-    pub enum Respond {
-        #[metadata(label = "File has more bytes to send")]
-        Send,
-        #[metadata(label = "End of request")]
-        EndResponse,
     }
 }
 
@@ -75,12 +50,11 @@ pub use worker::*;
 //
 
 impl IdleState for FileServerWorker<Idle> {
-    fn create_worker(stream: TcpStream, files: ServerFiles) -> FileServerWorker<Idle> {
+    fn start(stream: TcpStream) -> FileServerWorker<Idle> {
         let read_stream = BufReader::new(stream.try_clone().unwrap());
         FileServerWorker {
             read_stream,
             write_stream: stream,
-            files,
             state: Idle,
         }
     }
@@ -90,18 +64,16 @@ impl IdleState for FileServerWorker<Idle> {
             "REQUEST" => {
                 let filename = self.read_line();
 
-                Command::FileRequested(FileServerWorker {
+                Command::AnsweringRequest(FileServerWorker {
                     read_stream: self.read_stream,
                     write_stream: self.write_stream,
-                    files: self.files,
-                    state: FileRequested { filename },
+                    state: AnsweringRequest { filename },
                 })
             }
 
             "CLOSE" => Command::CloseConnection(FileServerWorker {
                 read_stream: self.read_stream,
                 write_stream: self.write_stream,
-                files: self.files,
                 state: CloseConnection,
             }),
 
@@ -110,56 +82,21 @@ impl IdleState for FileServerWorker<Idle> {
     }
 }
 
-impl FileRequestedState for FileServerWorker<FileRequested> {
-    fn respond(self) -> Respond {
-        match self.files.get(&self.state.filename) {
-            Some(file) => Respond::Send(FileServerWorker {
-                read_stream: self.read_stream,
-                write_stream: self.write_stream,
-                state: Send {
-                    remaining_bytes: file.clone().into(),
-                },
-                files: self.files,
-            }),
-            None => Respond::EndResponse(FileServerWorker {
-                read_stream: self.read_stream,
-                write_stream: self.write_stream,
-                files: self.files,
-                state: EndResponse,
-            }),
-        }
-    }
-}
-
-impl SendState for FileServerWorker<Send> {
-    fn send_byte(mut self) -> Respond {
-        match self.state.remaining_bytes.pop_front() {
-            Some(byte) => {
-                self.write_stream.write(&[byte]).unwrap();
-                Respond::Send(FileServerWorker {
-                    read_stream: self.read_stream,
-                    write_stream: self.write_stream,
-                    files: self.files,
-                    state: self.state,
-                })
-            }
-            None => Respond::EndResponse(FileServerWorker {
-                read_stream: self.read_stream,
-                write_stream: self.write_stream,
-                files: self.files,
-                state: EndResponse,
-            }),
-        }
-    }
-}
-
-impl EndResponseState for FileServerWorker<EndResponse> {
-    fn end_response(mut self) -> FileServerWorker<Idle> {
-        self.write_stream.write(&[0]).unwrap();
+impl AnsweringRequestState for FileServerWorker<AnsweringRequest> {
+    fn send_byte(mut self, byte: u8) -> FileServerWorker<AnsweringRequest> {
+        self.write_byte(byte);
         FileServerWorker {
             read_stream: self.read_stream,
             write_stream: self.write_stream,
-            files: self.files,
+            state: self.state,
+        }
+    }
+
+    fn end_response(mut self) -> FileServerWorker<Idle> {
+        self.write_byte(0u8);
+        FileServerWorker {
+            read_stream: self.read_stream,
+            write_stream: self.write_stream,
             state: Idle,
         }
     }
@@ -170,41 +107,23 @@ impl CloseConnectionState for FileServerWorker<CloseConnection> {
 }
 
 //
-// Auxiliary functions
+// Helper functions
 //
 
 impl FileServerWorker<Idle> {
-    // Run the worker, handling requests until the client closes the connection
-    pub fn run(mut self) {
-        loop {
-            self = match self.read_command() {
-                Command::FileRequested(request_worker) => request_worker.handle_request(),
-                Command::CloseConnection(worker) => {
-                    worker.close_connection();
-                    break;
-                }
-            }
-        }
-    }
-
-    // Read a line from the client
-    // Can only be done in the Idle state, to read the command (REQUEST or CLOSE) or the requested filename
     fn read_line(&mut self) -> String {
         let mut line = String::new();
-        self.read_stream.read_line(&mut line).unwrap();
+        self.read_stream
+            .read_line(&mut line)
+            .expect("Failed to read line");
         line.trim().to_string()
     }
 }
 
-impl FileServerWorker<FileRequested> {
-    pub fn handle_request(self) -> FileServerWorker<Idle> {
-        let mut response = self.respond();
-
-        loop {
-            response = match response {
-                Respond::Send(worker) => worker.send_byte(),
-                Respond::EndResponse(worker) => return worker.end_response(),
-            };
-        }
+impl FileServerWorker<AnsweringRequest> {
+    fn write_byte(&mut self, byte: u8) {
+        self.write_stream
+            .write(&[byte])
+            .expect("Failed to send byte");
     }
 }

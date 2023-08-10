@@ -8,6 +8,8 @@ use std::{
 
 mod server_worker;
 
+type ServerFiles = HashMap<String, Vec<u8>>;
+
 pub struct FileServer {
     socket: TcpListener,
     files: ServerFiles,
@@ -20,10 +22,34 @@ impl FileServer {
     }
 
     pub fn run_worker(&self, stream: TcpStream) {
-        // File map is cloned because we couldn't figure out how to use
-        // lifetime parameters with the typestate macro.
-        let worker = FileServerWorker::create_worker(stream, self.files.clone());
-        worker.run();
+        let worker = FileServerWorker::start(stream);
+
+        let mut command = worker.read_command();
+
+        loop {
+            command = match command {
+                Command::AnsweringRequest(mut worker) => {
+                    let filename = worker.state.filename.clone();
+                    let file = self.files.get(&filename);
+                    match file {
+                        Some(file) => {
+                            for byte in file {
+                                worker = worker.send_byte(*byte);
+                            }
+                            worker.end_response().read_command()
+                        }
+                        None => {
+                            println!("File not found: {}", filename);
+                            worker.end_response().read_command()
+                        }
+                    }
+                }
+                Command::CloseConnection(worker) => {
+                    worker.close_connection();
+                    break;
+                }
+            }
+        }
     }
 
     pub fn start(&self) {
