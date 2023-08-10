@@ -29,16 +29,16 @@ pub mod client {
     }
 
     #[state]
-    pub struct ReceivingByte {
+    pub struct ReceivingData {
         pub file_bytes: Vec<u8>,
     }
-    pub trait ReceivingByte {
+    pub trait ReceivingData {
         fn receive_byte(self) -> AwaitingResponse;
     }
 
     pub enum AwaitingResponse {
         #[metadata(label = "Receiving a byte")]
-        ReceivingByte,
+        ReceivingData,
         #[metadata(label = "End of response")]
         ResponseEnded,
     }
@@ -63,9 +63,9 @@ impl IdleState for FileClient<Idle> {
     fn start_request(mut self, filename: String) -> AwaitingResponse {
         self.send(format!("REQUEST\n{filename}\n").as_bytes());
 
-        AwaitingResponse::ReceivingByte(FileClient {
+        AwaitingResponse::ReceivingData(FileClient {
             stream: self.stream,
-            state: ReceivingByte {
+            state: ReceivingData {
                 file_bytes: Vec::new(),
             },
         })
@@ -76,7 +76,7 @@ impl IdleState for FileClient<Idle> {
     }
 }
 
-impl ReceivingByteState for FileClient<ReceivingByte> {
+impl ReceivingDataState for FileClient<ReceivingData> {
     fn receive_byte(mut self) -> AwaitingResponse {
         let byte = self.read_byte();
 
@@ -89,9 +89,9 @@ impl ReceivingByteState for FileClient<ReceivingByte> {
             })
         } else {
             self.state.file_bytes.push(byte);
-            AwaitingResponse::ReceivingByte(FileClient {
+            AwaitingResponse::ReceivingData(FileClient {
                 stream: self.stream,
-                state: ReceivingByte {
+                state: ReceivingData {
                     file_bytes: self.state.file_bytes,
                 },
             })
@@ -126,7 +126,7 @@ impl FileClient<Idle> {
 
         loop {
             response = match response {
-                AwaitingResponse::ReceivingByte(worker) => worker.receive_byte(),
+                AwaitingResponse::ReceivingData(worker) => worker.receive_byte(),
                 AwaitingResponse::ResponseEnded(worker) => {
                     buf.clear();
                     buf.extend(worker.state.result.clone());
@@ -137,7 +137,7 @@ impl FileClient<Idle> {
     }
 }
 
-impl FileClient<ReceivingByte> {
+impl FileClient<ReceivingData> {
     // Read a single byte from the server
     // Can only be done in ReceivingByte state, to receive a byte of the file
     fn read_byte(&mut self) -> u8 {

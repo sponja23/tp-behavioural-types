@@ -10,8 +10,8 @@ name = "server"
 path = "src/server/main.rs"
 
 [[bin]]
-name = "client"
-path = "src/client/main.rs"
+name = "client1"
+path = "src/client/client1.rs"
 
 [dependencies]
 typestate = "0.8.0"
