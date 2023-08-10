@@ -13,5 +13,9 @@ path = "src/server/server.rs"
 name = "client1"
 path = "src/client/client1.rs"
 
+[[bin]]
+name = "client2"
+path = "src/client/client2.rs"
+
 [dependencies]
 typestate = "0.8.0"

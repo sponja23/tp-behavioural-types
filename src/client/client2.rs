@@ -30,6 +30,8 @@ pub mod client {
     pub struct ReceivingData;
     pub trait ReceivingData {
         fn receive_byte(self, buf: &mut [u8; 1]) -> AwaitingResponse;
+        // This is the only change to the protocol
+        fn receive_line(self, buf: &mut Vec<u8>) -> AwaitingResponse;
     }
 
     pub enum AwaitingResponse {
@@ -87,6 +89,30 @@ impl ReceivingDataState for FileClient<ReceivingData> {
             }),
         }
     }
+
+    fn receive_line(mut self, buf: &mut Vec<u8>) -> AwaitingResponse {
+        let mut byte_buf = [0u8; 1];
+        let mut response: AwaitingResponse;
+
+        loop {
+            response = self.receive_byte(&mut byte_buf);
+            buf.push(byte_buf[0]);
+
+            // We include the newline in the result
+            if byte_buf[0] == b'\n' {
+                break;
+            }
+
+            match response {
+                AwaitingResponse::ReceivingData(worker) => {
+                    self = worker;
+                }
+                AwaitingResponse::ResponseEnded(_) => break,
+            }
+        }
+
+        response
+    }
 }
 
 impl ResponseEndedState for FileClient<ResponseEnded> {
@@ -103,23 +129,19 @@ impl ResponseEndedState for FileClient<ResponseEnded> {
 //
 
 impl FileClient<Idle> {
-    // Send a byte array to the server
-    // Can only be done in Idle state, to initiate a request or to close the connection
     fn send(&mut self, data: &[u8]) {
         self.stream
             .write_all(data)
             .expect("Failed to write to stream");
     }
 
-    // Request a file from the server
-    // Can only be done in Idle state, to initiate a request
+    #[allow(dead_code)]
     fn request_file(self, filename: String, buf: &mut Vec<u8>) -> FileClient<Idle> {
         let mut response = self.start_request(filename);
 
         loop {
             response = match response {
                 AwaitingResponse::ReceivingData(worker) => {
-                    // Read a byte from the server
                     let mut byte = [0; 1];
                     let response = worker.receive_byte(&mut byte);
                     buf.push(byte[0]);
@@ -131,11 +153,26 @@ impl FileClient<Idle> {
             }
         }
     }
+
+    // Reads the response line by line
+    fn request_file_by_lines(self, filename: String, buf: &mut Vec<u8>) -> FileClient<Idle> {
+        let mut response = self.start_request(filename);
+
+        loop {
+            response = match response {
+                AwaitingResponse::ReceivingData(worker) => {
+                    let response = worker.receive_line(buf);
+                    response
+                }
+                AwaitingResponse::ResponseEnded(worker) => {
+                    return worker.end_request();
+                }
+            }
+        }
+    }
 }
 
 impl FileClient<ReceivingData> {
-    // Read a single byte from the server
-    // Can only be done in ReceivingByte state, to receive a byte of the file
     fn read_byte(&mut self) -> u8 {
         let mut buf = [0; 1];
         self.stream
@@ -149,7 +186,7 @@ fn main() {
     let mut client = FileClient::connect_to("0.0.0.0:1234");
 
     let mut buf = Vec::new();
-    client = client.request_file("file-a.txt".to_string(), &mut buf);
+    client = client.request_file_by_lines("file-b.txt".to_string(), &mut buf);
 
     println!("{}", String::from_utf8(buf).unwrap());
 
